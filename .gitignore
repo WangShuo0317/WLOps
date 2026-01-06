@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+*.egg-info/
+
+# Java
+target/
+*.class
+*.jar
+*.war
+*.ear
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# 数据与模型
+data/
+models/
+LLaMA-Factory/
+!data/.gitkeep
+!models/.gitkeep
+
+# 日志
+logs/
+*.log
+
+# 配置
+.env
+application-local.yml
+
+# 临时文件
+tmp/
+temp/
+*.tmp
+
+# 数据库
+*.db
+*.sqlite

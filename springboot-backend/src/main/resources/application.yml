@@ -1,0 +1,40 @@
+spring:
+  application:
+    name: imts-backend
+  
+  datasource:
+    url: jdbc:mysql://localhost:3306/imts?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
+    username: root
+    password: your_password
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+
+server:
+  port: 8080
+
+# Python微服务配置
+python-services:
+  training:
+    url: http://localhost:8001
+    timeout: 300000  # 5分钟
+  data-analyzer:
+    url: http://localhost:8002
+    timeout: 60000   # 1分钟
+  evaluation:
+    url: http://localhost:8003
+    timeout: 120000  # 2分钟
+
+# 日志配置
+logging:
+  level:
+    com.imts: DEBUG
+    org.springframework.web: INFO
+  file:
+    name: logs/imts-backend.log
