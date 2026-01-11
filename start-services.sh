@@ -35,7 +35,8 @@ sleep 2
 # 启动数据分析服务
 echo "[3/4] 启动数据分析服务 (端口8002)..."
 cd python-services/data-analyzer-service
-python app.py &
+chmod +x start.sh
+./start.sh &
 ANALYZER_PID=$!
 cd ../..
 

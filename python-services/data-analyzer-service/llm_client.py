@@ -29,12 +29,12 @@ class LLMClient:
                 logger.error(f"LLM客户端初始化失败: {e}")
                 self.client = None
     
-    def generate(self, prompt: str, temperature: float = 0.7, max_tokens: int = 1000) -> str:
+    def chat(self, messages: list, temperature: float = 0.7, max_tokens: int = 1000) -> str:
         """
-        生成文本
+        聊天接口（支持多轮对话）
         
         Args:
-            prompt: 提示词
+            messages: 消息列表，格式: [{"role": "user", "content": "..."}]
             temperature: 温度参数
             max_tokens: 最大token数
             
@@ -47,18 +47,33 @@ class LLMClient:
         try:
             response = self.client.chat.completions.create(
                 model=self.model,
-                messages=[
-                    {"role": "system", "content": "你是一个专业的数据分析和生成助手。"},
-                    {"role": "user", "content": prompt}
-                ],
+                messages=messages,
                 temperature=temperature,
                 max_tokens=max_tokens
             )
             
             return response.choices[0].message.content
         except Exception as e:
-            logger.error(f"LLM生成失败: {e}")
+            logger.error(f"LLM聊天失败: {e}")
             raise
+    
+    def generate(self, prompt: str, temperature: float = 0.7, max_tokens: int = 1000) -> str:
+        """
+        生成文本（简化接口）
+        
+        Args:
+            prompt: 提示词
+            temperature: 温度参数
+            max_tokens: 最大token数
+            
+        Returns:
+            生成的文本
+        """
+        messages = [
+            {"role": "system", "content": "你是一个专业的数据分析和生成助手。"},
+            {"role": "user", "content": prompt}
+        ]
+        return self.chat(messages, temperature, max_tokens)
     
     def is_available(self) -> bool:
         """检查LLM是否可用"""

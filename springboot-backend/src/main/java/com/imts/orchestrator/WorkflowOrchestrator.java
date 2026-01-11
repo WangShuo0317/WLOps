@@ -99,7 +99,7 @@ public class WorkflowOrchestrator {
             })
             .flatMap(evaluationResult -> {
                 // 更新任务状态为 COMPLETED
-                task.setLatestEvaluationPath(evaluationResult.get("reportPath"));
+                task.setLatestEvaluationPath((String) evaluationResult.get("reportPath"));
                 task.setLatestScore((Double) evaluationResult.get("score"));
                 task.updateStatus(TaskStatus.COMPLETED);
                 taskRepository.save(task);
@@ -107,7 +107,7 @@ public class WorkflowOrchestrator {
                 log.info("[StandardPipeline] 标准训练流完成: taskId={}, score={}", 
                     task.getTaskId(), task.getLatestScore());
                 
-                return Mono.empty();
+                return Mono.<Void>empty();
             })
             .onErrorResume(error -> handleTaskError(task, error));
     }
@@ -191,7 +191,7 @@ public class WorkflowOrchestrator {
             })
             .flatMap(evaluationResult -> {
                 // 更新任务评估结果
-                task.setLatestEvaluationPath(evaluationResult.get("reportPath"));
+                task.setLatestEvaluationPath((String) evaluationResult.get("reportPath"));
                 task.setLatestScore((Double) evaluationResult.get("score"));
                 taskRepository.save(task);
                 
@@ -204,9 +204,11 @@ public class WorkflowOrchestrator {
     
     /**
      * 执行数据优化
+     * 
+     * 标准训练任务使用 auto 模式（标注流程优化）
      */
     private Mono<String> executeOptimization(MLTask task, int iteration) {
-        log.info("[Optimization] 开始数据优化: taskId={}, iteration={}", task.getTaskId(), iteration);
+        log.info("[Optimization] 开始数据优化（auto模式）: taskId={}, iteration={}", task.getTaskId(), iteration);
         
         // 创建执行记录
         TaskExecution execution = TaskExecution.builder()
@@ -223,10 +225,10 @@ public class WorkflowOrchestrator {
         return Mono.fromCallable(() -> datasetRepository.findByDatasetId(task.getDatasetId())
                 .orElseThrow(() -> new RuntimeException("数据集不存在: " + task.getDatasetId())))
             .flatMap(dataset -> {
-                // 调用数据优化服务
+                // 调用数据优化服务（auto 模式 - 不提供 optimizationGuidance）
                 return dataAnalyzerClient.optimizeDatasetSync(
                     List.of(Map.of("storagePath", dataset.getStoragePath())),
-                    null
+                    null  // 不提供知识库，使用 auto 模式
                 );
             })
             .map(result -> {
@@ -252,7 +254,7 @@ public class WorkflowOrchestrator {
                 execution.markCompleted();
                 executionRepository.save(execution);
                 
-                log.info("[Optimization] 数据优化完成: taskId={}, outputDatasetId={}", 
+                log.info("[Optimization] 数据优化完成（auto模式）: taskId={}, outputDatasetId={}", 
                     task.getTaskId(), optimizedDatasetId);
                 
                 return optimizedDatasetId;
@@ -266,14 +268,125 @@ public class WorkflowOrchestrator {
     
     /**
      * 执行数据优化（带反馈）
+     * 
+     * 持续学习任务使用 guided 模式（指定优化）
+     * 根据评估报告的改进建议构建优化指导
      */
     private Mono<String> executeOptimizationWithFeedback(MLTask task, int iteration, List<String> suggestions) {
-        log.info("[OptimizationWithFeedback] 开始数据优化（带反馈）: taskId={}, iteration={}, suggestions={}", 
+        log.info("[OptimizationWithFeedback] 开始数据优化（guided模式）: taskId={}, iteration={}, suggestions={}", 
             task.getTaskId(), iteration, suggestions.size());
         
-        // 如果有改进建议，将其作为知识库传递给优化服务
-        return executeOptimization(task, iteration);
-        // TODO: 实际实现中应该将 suggestions 传递给优化服务
+        // 创建执行记录
+        TaskExecution execution = TaskExecution.builder()
+            .taskId(task.getTaskId())
+            .iteration(iteration)
+            .phase("optimization")
+            .status("running")
+            .inputDatasetId(task.getDatasetId())
+            .startedAt(LocalDateTime.now())
+            .build();
+        executionRepository.save(execution);
+        
+        // 获取数据集信息
+        return Mono.fromCallable(() -> datasetRepository.findByDatasetId(task.getDatasetId())
+                .orElseThrow(() -> new RuntimeException("数据集不存在: " + task.getDatasetId())))
+            .flatMap(dataset -> {
+                // 构建优化指导（guided 模式）
+                Map<String, Object> optimizationGuidance = buildOptimizationGuidance(
+                    task, 
+                    iteration, 
+                    suggestions
+                );
+                
+                log.info("[OptimizationWithFeedback] 使用优化指导: {}", optimizationGuidance);
+                
+                // 调用数据优化服务（guided 模式 - 提供 optimizationGuidance）
+                return dataAnalyzerClient.optimizeDatasetWithGuidance(
+                    List.of(Map.of("storagePath", dataset.getStoragePath())),
+                    null,  // 知识库
+                    optimizationGuidance  // 优化指导
+                );
+            })
+            .map(result -> {
+                // 保存优化后的数据集
+                String optimizedDatasetId = "dataset_opt_" + UUID.randomUUID().toString().substring(0, 8);
+                
+                Dataset optimizedDataset = Dataset.builder()
+                    .datasetId(optimizedDatasetId)
+                    .name(task.getTaskName() + "_optimized_iter" + iteration)
+                    .storagePath("s3://bucket/optimized/" + optimizedDatasetId + ".json")
+                    .userId(task.getUserId())
+                    .isOptimized(true)
+                    .sourceDatasetId(task.getDatasetId())
+                    .domain(datasetRepository.findByDatasetId(task.getDatasetId())
+                        .map(Dataset::getDomain).orElse("general"))
+                    .createdAt(LocalDateTime.now())
+                    .build();
+                
+                datasetRepository.save(optimizedDataset);
+                
+                // 更新执行记录
+                execution.setOutputDatasetId(optimizedDatasetId);
+                execution.markCompleted();
+                executionRepository.save(execution);
+                
+                log.info("[OptimizationWithFeedback] 数据优化完成（guided模式）: taskId={}, outputDatasetId={}", 
+                    task.getTaskId(), optimizedDatasetId);
+                
+                return optimizedDatasetId;
+            })
+            .onErrorResume(error -> {
+                execution.markFailed(error.getMessage());
+                executionRepository.save(execution);
+                return Mono.error(error);
+            });
+    }
+    
+    /**
+     * 构建优化指导
+     * 
+     * 根据评估报告的改进建议构建优化指导
+     */
+    private Map<String, Object> buildOptimizationGuidance(
+        MLTask task, 
+        int iteration, 
+        List<String> suggestions
+    ) {
+        Map<String, Object> guidance = new java.util.HashMap<>();
+        
+        // 关注领域（根据建议动态确定）
+        List<String> focusAreas = new java.util.ArrayList<>();
+        if (suggestions.stream().anyMatch(s -> s.contains("推理") || s.contains("COT"))) {
+            focusAreas.add("reasoning_quality");
+        }
+        if (suggestions.stream().anyMatch(s -> s.contains("样本") || s.contains("数据"))) {
+            focusAreas.add("semantic_distribution");
+        }
+        if (focusAreas.isEmpty()) {
+            focusAreas.add("reasoning_quality");
+            focusAreas.add("semantic_distribution");
+        }
+        guidance.put("focus_areas", focusAreas);
+        
+        // 优化指令（基于评估建议）
+        String optimizationInstructions = String.format(
+            "根据第 %d 轮评估结果，重点改进以下方面：%s。确保每个样本都有详细的推理过程。",
+            iteration,
+            String.join("、", suggestions)
+        );
+        guidance.put("optimization_instructions", optimizationInstructions);
+        
+        // 生成指令（基于评估建议）
+        String generationInstructions = String.format(
+            "生成更多样本来解决以下问题：%s。保持与现有数据集的主题一致性。",
+            String.join("、", suggestions)
+        );
+        guidance.put("generation_instructions", generationInstructions);
+        
+        log.info("[OptimizationGuidance] 构建优化指导: iteration={}, focusAreas={}, suggestions={}", 
+            iteration, focusAreas, suggestions.size());
+        
+        return guidance;
     }
     
     /**

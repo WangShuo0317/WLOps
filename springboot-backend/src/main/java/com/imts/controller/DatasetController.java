@@ -102,9 +102,10 @@ public class DatasetController {
     @PutMapping("/{datasetId}")
     public Mono<ResponseEntity<Dataset>> updateDatasetMetadata(
         @PathVariable String datasetId,
+        @RequestParam("userId") Long userId,  // 添加 userId 参数
         @RequestBody Map<String, Object> request
     ) {
-        log.info("更新数据集元数据: datasetId={}", datasetId);
+        log.info("更新数据集元数据: datasetId={}, userId={}", datasetId, userId);
         
         String name = (String) request.get("name");
         String description = (String) request.get("description");
@@ -113,8 +114,11 @@ public class DatasetController {
             : null;
         
         return datasetService.updateDatasetMetadata(
-            datasetId, name, description, sampleCount
-        ).map(ResponseEntity::ok);
+            datasetId, userId, name, description, sampleCount
+        ).map(ResponseEntity::ok)
+         .onErrorResume(error -> 
+            Mono.just(ResponseEntity.badRequest().body(null))
+         );
     }
     
     /**
@@ -124,11 +128,12 @@ public class DatasetController {
      */
     @DeleteMapping("/{datasetId}")
     public Mono<ResponseEntity<Map<String, String>>> deleteDataset(
-        @PathVariable String datasetId
+        @PathVariable String datasetId,
+        @RequestParam("userId") Long userId  // 添加 userId 参数
     ) {
-        log.info("删除数据集: {}", datasetId);
+        log.info("删除数据集: datasetId={}, userId={}", datasetId, userId);
         
-        return datasetService.deleteDataset(datasetId)
+        return datasetService.deleteDataset(datasetId, userId)
             .then(Mono.just(ResponseEntity.ok(Map.of(
                 "message", "数据集已删除",
                 "datasetId", datasetId

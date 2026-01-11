@@ -33,7 +33,7 @@ timeout /t 2 /nobreak >nul
 
 REM 启动数据分析服务
 echo [3/4] 启动数据分析服务 (端口8002)...
-start "数据分析服务" cmd /k "cd python-services\data-analyzer-service && python app.py"
+start "数据分析服务" cmd /k "cd python-services\data-analyzer-service && call start.bat"
 timeout /t 2 /nobreak >nul
 
 REM 启动评测服务

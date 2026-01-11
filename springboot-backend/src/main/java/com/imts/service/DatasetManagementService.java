@@ -9,6 +9,10 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 import reactor.core.publisher.Mono;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -51,21 +55,32 @@ public class DatasetManagementService {
         String domain,
         Long userId
     ) {
-        log.info("上传数据集: name={}, size={}, type={}, domain={}", 
-            name, file.getSize(), datasetType, domain);
+        log.info("上传数据集: name={}, size={}, type={}, domain={}, userId={}", 
+            name, file.getSize(), datasetType, domain, userId);
         
         return Mono.fromCallable(() -> {
             // 生成数据集ID
             String datasetId = "dataset_" + UUID.randomUUID().toString().substring(0, 8);
             
-            // 构建存储路径
-            String storagePath = String.format("s3://bucket/datasets/%s/%s/%s",
-                userId, datasetId, file.getOriginalFilename());
+            // 构建本地存储路径 - 使用项目下的 Dataset 目录
+            String baseDir = "Dataset";  // 项目根目录下的 Dataset 文件夹
+            String userDir = String.format("%s/user_%s", baseDir, userId);
+            String datasetDir = String.format("%s/%s", userDir, datasetId);
             
-            // TODO: 实际上传到对象存储
-            // storageClient.uploadStream(storagePath, file.getInputStream());
+            // 创建目录
+            Path datasetPath = Paths.get(datasetDir);
+            Files.createDirectories(datasetPath);
             
-            log.info("文件已上传到对象存储: path={}", storagePath);
+            // 保存文件
+            String fileName = file.getOriginalFilename();
+            Path filePath = datasetPath.resolve(fileName);
+            file.transferTo(filePath.toFile());
+            
+            // 构建存储路径（相对路径，用于数据库记录）
+            String storagePath = String.format("%s/%s", datasetDir, fileName);
+            
+            log.info("文件已保存到本地: path={}, absolutePath={}", 
+                storagePath, filePath.toAbsolutePath());
             
             // 创建数据集元数据
             Dataset dataset = Dataset.builder()
@@ -86,7 +101,24 @@ public class DatasetManagementService {
     }
     
     /**
-     * 查询数据集详情
+     * 查询数据集详情（带用户验证）
+     */
+    public Mono<Dataset> getDataset(String datasetId, Long userId) {
+        return Mono.fromCallable(() -> {
+            Dataset dataset = datasetRepository.findByDatasetId(datasetId)
+                .orElseThrow(() -> new RuntimeException("数据集不存在: " + datasetId));
+            
+            // 用户隔离验证
+            if (!dataset.getUserId().equals(userId)) {
+                throw new RuntimeException("无权访问此数据集");
+            }
+            
+            return dataset;
+        });
+    }
+    
+    /**
+     * 查询数据集详情（不验证用户，用于内部调用）
      */
     public Mono<Dataset> getDataset(String datasetId) {
         return Mono.fromCallable(() -> datasetRepository.findByDatasetId(datasetId)
@@ -110,20 +142,26 @@ public class DatasetManagementService {
     }
     
     /**
-     * 更新数据集元数据
+     * 更新数据集元数据（带用户验证）
      */
     @Transactional
     public Mono<Dataset> updateDatasetMetadata(
         String datasetId,
+        Long userId,
         String name,
         String description,
         Integer sampleCount
     ) {
-        log.info("更新数据集元数据: datasetId={}", datasetId);
+        log.info("更新数据集元数据: datasetId={}, userId={}", datasetId, userId);
         
         return Mono.fromCallable(() -> {
             Dataset dataset = datasetRepository.findByDatasetId(datasetId)
                 .orElseThrow(() -> new RuntimeException("数据集不存在: " + datasetId));
+            
+            // 用户隔离验证
+            if (!dataset.getUserId().equals(userId)) {
+                throw new RuntimeException("无权修改此数据集");
+            }
             
             if (name != null) {
                 dataset.setName(name);
@@ -142,18 +180,42 @@ public class DatasetManagementService {
     }
     
     /**
-     * 删除数据集
+     * 删除数据集（带用户验证）
      */
     @Transactional
-    public Mono<Void> deleteDataset(String datasetId) {
-        log.info("删除数据集: datasetId={}", datasetId);
+    public Mono<Void> deleteDataset(String datasetId, Long userId) {
+        log.info("删除数据集: datasetId={}, userId={}", datasetId, userId);
         
         return Mono.fromCallable(() -> {
             Dataset dataset = datasetRepository.findByDatasetId(datasetId)
                 .orElseThrow(() -> new RuntimeException("数据集不存在: " + datasetId));
             
-            // TODO: 从对象存储删除文件
-            // storageClient.delete(dataset.getStoragePath());
+            // 用户隔离验证
+            if (!dataset.getUserId().equals(userId)) {
+                throw new RuntimeException("无权删除此数据集");
+            }
+            
+            // 删除物理文件
+            try {
+                Path filePath = Paths.get(dataset.getStoragePath());
+                if (Files.exists(filePath)) {
+                    Files.delete(filePath);
+                    log.info("物理文件已删除: {}", filePath);
+                    
+                    // 尝试删除空目录
+                    Path parentDir = filePath.getParent();
+                    if (parentDir != null && Files.isDirectory(parentDir)) {
+                        try {
+                            Files.delete(parentDir);
+                            log.info("空目录已删除: {}", parentDir);
+                        } catch (Exception e) {
+                            // 目录不为空，忽略
+                        }
+                    }
+                }
+            } catch (IOException e) {
+                log.warn("删除物理文件失败: {}", e.getMessage());
+            }
             
             // 删除元数据
             datasetRepository.delete(dataset);

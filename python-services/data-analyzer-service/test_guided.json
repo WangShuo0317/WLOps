@@ -1,0 +1,16 @@
+{
+  "dataset": [
+    {
+      "question": "什么是Python？",
+      "answer": "Python是一种编程语言。"
+    },
+    {
+      "question": "什么是Java？",
+      "answer": "Java是另一种编程语言。"
+    }
+  ],
+  "optimization_guidance": {
+    "focus_areas": ["reasoning_quality"],
+    "problem_indices": [0]
+  }
+}

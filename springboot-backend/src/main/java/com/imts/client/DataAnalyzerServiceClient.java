@@ -3,6 +3,7 @@ package com.imts.client;
 import com.imts.dto.analyzer.*;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
@@ -12,11 +13,15 @@ import java.util.Map;
 
 /**
  * 数据优化服务客户端
- * 调用 Python 自进化数据优化智能体服务
+ * 调用 Python 自进化数据优化智能体服务（LangGraph 版本）
  * 
  * 核心功能：将原始数据集转换为纯净的高质量数据集
  * 
- * @version 3.1.0
+ * 支持双模式：
+ * - auto（标注流程优化）：无需优化指导，自动诊断和优化
+ * - guided（指定优化）：提供优化指导，按需优化
+ * 
+ * @version 4.0.0
  */
 @Slf4j
 @Component
@@ -96,11 +101,53 @@ public class DataAnalyzerServiceClient {
         List<Map<String, Object>> dataset,
         List<String> knowledgeBase
     ) {
-        log.info("调用数据优化服务（同步）: dataset_size={}", dataset.size());
+        log.info("调用数据优化服务（同步，auto模式）: dataset_size={}", dataset.size());
         
         OptimizationRequest request = OptimizationRequest.builder()
             .dataset(dataset)
             .knowledgeBase(knowledgeBase)
+            .saveReports(false)
+            // 不提供 optimizationGuidance，使用 auto 模式
+            .build();
+        
+        return webClient.post()
+            .uri("/optimize/sync")
+            .bodyValue(request)
+            .retrieve()
+            .bodyToMono(OptimizationResult.class)
+            .doOnSuccess(result -> 
+                log.info("同步优化完成（{}模式）: input={}, output={}, quality_improvement={}%", 
+                    result.getMode(),
+                    result.getStatistics().get("input_size"),
+                    result.getStatistics().get("output_size"),
+                    result.getStatistics().get("quality_improvement")))
+            .doOnError(error -> 
+                log.error("同步优化失败", error));
+    }
+    
+    /**
+     * 优化数据集（同步，带优化指导）
+     * 
+     * 使用 guided 模式，根据优化指导进行优化
+     * 仅用于持续学习任务
+     * 
+     * @param dataset 原始数据集
+     * @param knowledgeBase 知识库（可选）
+     * @param optimizationGuidance 优化指导
+     * @return 优化结果（包含优化后的数据集）
+     */
+    public Mono<OptimizationResult> optimizeDatasetWithGuidance(
+        List<Map<String, Object>> dataset,
+        List<String> knowledgeBase,
+        Map<String, Object> optimizationGuidance
+    ) {
+        log.info("调用数据优化服务（同步，guided模式）: dataset_size={}, guidance={}", 
+            dataset.size(), optimizationGuidance);
+        
+        OptimizationRequest request = OptimizationRequest.builder()
+            .dataset(dataset)
+            .knowledgeBase(knowledgeBase)
+            .optimizationGuidance(optimizationGuidance)  // 提供优化指导，使用 guided 模式
             .saveReports(false)
             .build();
         
@@ -110,7 +157,8 @@ public class DataAnalyzerServiceClient {
             .retrieve()
             .bodyToMono(OptimizationResult.class)
             .doOnSuccess(result -> 
-                log.info("同步优化完成: input={}, output={}, quality_improvement={}%", 
+                log.info("同步优化完成（{}模式）: input={}, output={}, quality_improvement={}%", 
+                    result.getMode(),
                     result.getStatistics().get("input_size"),
                     result.getStatistics().get("output_size"),
                     result.getStatistics().get("quality_improvement")))
@@ -131,7 +179,7 @@ public class DataAnalyzerServiceClient {
             .uri("/knowledge-base/load")
             .bodyValue(knowledge)
             .retrieve()
-            .bodyToMono(Map.class)
+            .bodyToMono(new ParameterizedTypeReference<Map<String, Object>>() {})
             .doOnSuccess(response -> 
                 log.info("知识库加载成功: {}", response.get("message")))
             .doOnError(error -> 
@@ -175,6 +223,6 @@ public class DataAnalyzerServiceClient {
         return webClient.get()
             .uri("/stats")
             .retrieve()
-            .bodyToMono(Map.class);
+            .bodyToMono(new ParameterizedTypeReference<Map<String, Object>>() {});
     }
 }

@@ -2,7 +2,13 @@
 配置文件
 """
 import os
+from pathlib import Path
 from typing import Optional
+from dotenv import load_dotenv
+
+# 加载 .env 文件
+env_path = Path(__file__).parent / '.env'
+load_dotenv(dotenv_path=env_path)
 
 class Config:
     """服务配置"""
@@ -20,7 +26,7 @@ class Config:
     # Embedding模型配置
     EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
     EMBEDDING_BATCH_SIZE = int(os.getenv("EMBEDDING_BATCH_SIZE", "32"))
-    EMBEDDING_DEVICE = os.getenv("EMBEDDING_DEVICE", "cpu")  # cpu or cuda
+    EMBEDDING_DEVICE = os.getenv("EMBEDDING_DEVICE", "cuda")  # cpu or cuda
     
     # 向量数据库配置
     VECTOR_DB_TYPE = os.getenv("VECTOR_DB_TYPE", "faiss")  # faiss or chromadb
@@ -60,5 +66,10 @@ class Config:
     
     # 日志配置
     LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+    
+    # 输出配置
+    OUTPUT_DIR = os.getenv("OUTPUT_DIR", "./outputs")
+    SAVE_DATASETS = os.getenv("SAVE_DATASETS", "true").lower() == "true"
+    SAVE_REPORTS = os.getenv("SAVE_REPORTS", "true").lower() == "true"
 
 config = Config()

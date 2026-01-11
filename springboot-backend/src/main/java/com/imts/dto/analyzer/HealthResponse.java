@@ -8,6 +8,8 @@ import lombok.NoArgsConstructor;
 
 /**
  * 健康检查响应
+ * 
+ * @version 4.0.0 - 新增 workflow_engine 字段
  */
 @Data
 @Builder
@@ -41,4 +43,10 @@ public class HealthResponse {
      */
     @JsonProperty("embedding_model")
     private String embeddingModel;
+    
+    /**
+     * 工作流引擎（LangGraph）
+     */
+    @JsonProperty("workflow_engine")
+    private String workflowEngine;
 }

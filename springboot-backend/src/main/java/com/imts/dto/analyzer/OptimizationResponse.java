@@ -8,6 +8,8 @@ import lombok.NoArgsConstructor;
 
 /**
  * 数据优化响应
+ * 
+ * @version 4.0.0 - 新增 mode 字段
  */
 @Data
 @Builder
@@ -25,6 +27,11 @@ public class OptimizationResponse {
      * 任务状态: processing/completed/failed
      */
     private String status;
+    
+    /**
+     * 优化模式: auto（标注流程优化）或 guided（指定优化）
+     */
+    private String mode;
     
     /**
      * 状态消息

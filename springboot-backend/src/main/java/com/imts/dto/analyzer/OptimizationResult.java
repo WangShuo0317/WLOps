@@ -11,6 +11,8 @@ import java.util.Map;
 
 /**
  * 优化结果
+ * 
+ * @version 4.0.0 - 新增 mode 字段
  */
 @Data
 @Builder
@@ -28,6 +30,11 @@ public class OptimizationResult {
      * 任务状态
      */
     private String status;
+    
+    /**
+     * 优化模式: auto（标注流程优化）或 guided（指定优化）
+     */
+    private String mode;
     
     /**
      * 优化后的数据集（纯净的高质量数据）

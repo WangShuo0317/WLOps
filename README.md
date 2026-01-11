@@ -6,9 +6,18 @@ Intelligent Model Training System - 基于Spring Boot + Python微服务的AI训�
 
 ```
 ┌─────────────────────────────────────────────────────────┐
+│              React 前端界面 (3000)                        │
+│  - 数据集管理                                            │
+│  - 任务管理                                              │
+│  - 实时监控                                              │
+│  - 可视化展示                                            │
+└────────────────────────┬────────────────────────────────┘
+                         │ HTTP/REST
+                         ↓
+┌─────────────────────────────────────────────────────────┐
 │              Spring Boot 主控制系统 (8080)                │
 │  - 任务管理                                              │
-│  - 数据持久化 (MySQL)                                    │
+│  - 数据持久化 (PostgreSQL)                               │
 │  - 业务逻辑编排                                          │
 │  - Web API                                              │
 └────────────┬────────────┬────────────┬──────────────────┘
@@ -17,7 +26,7 @@ Intelligent Model Training System - 基于Spring Boot + Python微服务的AI训�
              ↓            ↓            ↓
 ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
 │ 训练服务     │ │ 数据分析服务  │ │ 评测服务     │
-│ (8001)      │ │ (8002)       │ │ (8003)      │
+│ (8004)      │ │ (8002)       │ │ (8003)      │
 │             │ │              │ │             │
 │ LLaMA       │ │ 数据分析     │ │ 多智能体    │
 │ Factory     │ │ 智能体       │ │ 评测法官    │
@@ -27,13 +36,23 @@ Intelligent Model Training System - 基于Spring Boot + Python微服务的AI训�
 
 ## 核心特性
 
+- 🎨 **现代化前端** - React + TypeScript + Ant Design 5 的直观界面
 - 🎯 **Spring Boot主控** - 统一的任务管理和业务编排
 - 🤖 **Python微服务** - 独立的训练、分析、评测服务
 - 🔄 **控制与数据分离** - 清晰的架构边界
-- 📊 **数据持久化** - MySQL存储任务和结果
+- 📊 **数据持久化** - PostgreSQL存储任务和结果
 - 🚀 **高性能训练** - 基于LLaMA Factory的分布式训练
 - 🧠 **智能分析** - AI驱动的数据分析和优化
 - ⚖️ **多智能体评测** - 辩论机制的深度评估
+- 📈 **实时监控** - 任务状态实时更新和可视化展示
+
+## 项目状态
+
+✅ **代码框架**: 100%完成  
+⏳ **环境安装**: 待完成  
+⏳ **功能测试**: 待完成  
+
+详见 [CURRENT_STATUS.md](./CURRENT_STATUS.md)
 
 ## 快速开始
 
@@ -45,63 +64,102 @@ Intelligent Model Training System - 基于Spring Boot + Python微服务的AI训�
 - MySQL 8.0+
 - Maven 3.6+
 
-**可选**:
-- NVIDIA GPU (用于模型训练)
-- CUDA 11.8+
+**详细安装指南**: 参见 [ENVIRONMENT_SETUP.md](./ENVIRONMENT_SETUP.md)
 
 ### 2. 克隆项目
 
 ```bash
-git clone <repository-url>
-cd imts
+git clone https://github.com/WangShuo0317/WLOps.git
+cd WLOps
 
 # 克隆LLaMA Factory
 git clone https://github.com/hiyouga/LLaMA-Factory.git
 ```
 
-### 3. 启动Python微服务
+### 3. 配置数据库
 
-```bash
-# 安装Python依赖
-pip install -r python-services/requirements.txt
-
-# 启动训练服务 (端口8001)
-cd python-services/training-service
-python app.py
-
-# 启动数据分析服务 (端口8002)
-cd python-services/data-analyzer-service
-python app.py
-
-# 启动评测服务 (端口8003)
-cd python-services/evaluation-service
-python app.py
+```sql
+CREATE DATABASE imts CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 ```
 
-### 4. 启动Spring Boot后端
+编辑 `springboot-backend/src/main/resources/application.yml` 配置数据库连接。
+
+### 4. 启动Python微服务
+
+**Windows**:
+```bash
+start-services.bat
+```
+
+**Linux/Mac**:
+```bash
+chmod +x start-services.sh
+./start-services.sh
+```
+
+### 5. 启动Spring Boot后端
 
 ```bash
 cd springboot-backend
-
-# 配置数据库
-# 编辑 src/main/resources/application.yml
-# 修改数据库连接信息
-
-# 启动应用
 mvn spring-boot:run
 ```
 
-### 5. 访问系统
+### 6. 启动前端（新增）
 
+**Windows**:
+```bash
+cd frontend
+start-frontend.bat
+```
+
+**Linux/Mac**:
+```bash
+cd frontend
+chmod +x start-frontend.sh
+./start-frontend.sh
+```
+
+或手动启动：
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+### 7. 访问系统
+
+- **前端界面**: http://localhost:3000 ⭐ 推荐使用
 - **Spring Boot API**: http://localhost:8080
-- **训练服务**: http://localhost:8001/docs
+- **训练服务**: http://localhost:8004/docs
 - **数据分析服务**: http://localhost:8002/docs
 - **评测服务**: http://localhost:8003/docs
+
+### 8. 开始使用
+
+通过前端界面：
+1. 访问 http://localhost:3000
+2. 上传数据集
+3. 创建训练任务
+4. 启动任务并实时监控
+5. 查看执行历史和结果
+
+通过 API：
+参见 [springboot-backend/API_EXAMPLES.md](./springboot-backend/API_EXAMPLES.md) 进行完整测试。
 
 ## 项目结构
 
 ```
-imts/
+WLOps/
+├── frontend/                    # React 前端界面 ⭐ 新增
+│   ├── src/
+│   │   ├── components/         # 公共组件
+│   │   ├── pages/              # 页面组件
+│   │   ├── services/           # API 服务
+│   │   ├── types/              # TypeScript 类型
+│   │   └── utils/              # 工具函数
+│   ├── package.json
+│   └── vite.config.ts
+│
 ├── springboot-backend/          # Spring Boot主控系统
 │   ├── src/main/java/com/imts/
 │   │   ├── client/             # Python服务客户端
@@ -109,23 +167,26 @@ imts/
 │   │   ├── service/            # 业务服务层
 │   │   ├── entity/             # 数据库实体
 │   │   ├── repository/         # 数据访问层
+│   │   ├── orchestrator/       # 工作流编排器
 │   │   └── dto/                # 数据传输对象
 │   └── pom.xml
 │
 ├── python-services/             # Python微服务
 │   ├── training-service/       # 训练服务 (LLaMA Factory)
-│   │   ├── app.py
+│   │   ├── api.py
 │   │   └── llamafactory_adapter.py
 │   ├── data-analyzer-service/  # 数据分析智能体
-│   │   └── app.py
+│   │   └── api.py
 │   └── evaluation-service/     # 评测法官智能体
-│       └── app.py
+│       └── api.py
 │
 ├── LLaMA-Factory/              # 训练引擎 (git clone)
 │
 └── docs/                       # 文档
     ├── ARCHITECTURE.md
-    └── API.md
+    ├── FRONTEND_GUIDE.md       # 前端使用指南 ⭐ 新增
+    ├── FRONTEND_OVERVIEW.md    # 前端项目总览 ⭐ 新增
+    └── QUICK_START_FRONTEND.md # 前端快速启动 ⭐ 新增
 ```
 
 ## API文档
@@ -196,11 +257,19 @@ kubectl apply -f k8s/
 
 ## 技术栈
 
+### 前端 ⭐ 新增
+- React 18
+- TypeScript
+- Vite
+- Ant Design 5
+- React Router 6
+- Axios
+
 ### Spring Boot后端
 - Spring Boot 3.2
 - Spring Data JPA
 - Spring WebFlux
-- MySQL 8.0
+- PostgreSQL 14+
 - Lombok
 
 ### Python微服务
@@ -212,10 +281,18 @@ kubectl apply -f k8s/
 
 ## 文档
 
-- [系统架构](./docs/ARCHITECTURE.md)
-- [API文档](./docs/API.md)
-- [部署指南](./docs/DEPLOYMENT.md)
-- [开发指南](./docs/DEVELOPMENT.md)
+### 前端文档 ⭐ 新增
+- [前端快速启动](./QUICK_START_FRONTEND.md)
+- [前端使用指南](./FRONTEND_GUIDE.md)
+- [前端项目总览](./FRONTEND_OVERVIEW.md)
+- [功能详解](./frontend/FEATURES.md)
+- [前端 README](./frontend/README.md)
+
+### 后端文档
+- [系统架构](./springboot-backend/ARCHITECTURE.md)
+- [API 示例](./springboot-backend/API_EXAMPLES.md)
+- [快速启动](./springboot-backend/QUICK_START.md)
+- [项目结构](./springboot-backend/PROJECT_STRUCTURE.md)
 
 ## 许可证
 

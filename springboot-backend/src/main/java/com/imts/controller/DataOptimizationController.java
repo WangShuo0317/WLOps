@@ -18,6 +18,9 @@ import java.util.Map;
  * 数据优化控制器
  * 
  * 提供数据集优化的 REST API
+ * 
+ * 注意：此控制器仅支持标准优化（auto 模式）
+ * 指定优化（guided 模式）仅用于持续学习任务的内部调用
  */
 @Slf4j
 @RestController
@@ -31,6 +34,7 @@ public class DataOptimizationController {
      * 优化数据集（异步）
      * 
      * 适用于大数据集（> 100 样本）
+     * 仅支持标准优化（auto 模式）
      * 
      * POST /api/data-optimization/optimize
      */
@@ -38,7 +42,13 @@ public class DataOptimizationController {
     public Mono<ResponseEntity<OptimizationResponse>> optimizeDataset(
         @RequestBody OptimizationRequest request
     ) {
-        log.info("收到数据优化请求: dataset_size={}", request.getDataset().size());
+        log.info("收到数据优化请求（auto模式）: dataset_size={}", request.getDataset().size());
+        
+        // 忽略任何外部提供的 optimizationGuidance，强制使用 auto 模式
+        if (request.getOptimizationGuidance() != null) {
+            log.warn("外部调用不允许使用 optimizationGuidance，已忽略");
+            request.setOptimizationGuidance(null);
+        }
         
         return dataAnalyzerClient.optimizeDatasetAsync(
             request.getDataset(),
@@ -74,6 +84,7 @@ public class DataOptimizationController {
      * 
      * 适用于小数据集（< 100 样本）
      * 直接返回优化后的数据集
+     * 仅支持标准优化（auto 模式）
      * 
      * POST /api/data-optimization/optimize/sync
      */
@@ -81,13 +92,20 @@ public class DataOptimizationController {
     public Mono<ResponseEntity<OptimizationResult>> optimizeDatasetSync(
         @RequestBody OptimizationRequest request
     ) {
-        log.info("收到同步优化请求: dataset_size={}", request.getDataset().size());
+        log.info("收到同步优化请求（auto模式）: dataset_size={}", request.getDataset().size());
+        
+        // 忽略任何外部提供的 optimizationGuidance，强制使用 auto 模式
+        if (request.getOptimizationGuidance() != null) {
+            log.warn("外部调用不允许使用 optimizationGuidance，已忽略");
+            request.setOptimizationGuidance(null);
+        }
         
         return dataAnalyzerClient.optimizeDatasetSync(
             request.getDataset(),
             request.getKnowledgeBase()
         ).map(result -> {
-            log.info("同步优化完成: input={}, output={}, improvement={}%",
+            log.info("同步优化完成（{}模式）: input={}, output={}, improvement={}%",
+                result.getMode(),
                 result.getStatistics().get("input_size"),
                 result.getStatistics().get("output_size"),
                 result.getStatistics().get("quality_improvement"));
