@@ -50,6 +50,11 @@ export interface MLTask {
   updatedAt?: string
   startedAt?: string
   completedAt?: string
+  // v5.0 新增：进度跟踪字段
+  progress?: number  // 进度百分比 (0-100)
+  currentPhase?: string  // 当前阶段 (diagnostic/optimization/generation/verification/cleaning)
+  completedBatches?: number  // 已完成批次数
+  totalBatches?: number  // 总批次数
 }
 
 export interface TaskExecution {

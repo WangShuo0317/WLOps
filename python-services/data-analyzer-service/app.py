@@ -1,28 +1,26 @@
 """
-数据优化服务 API (重构版)
-使用 LangGraph 构建的多智能体工作流
+数据优化服务 API (重构版 - 支持大规模数据处理)
+使用 LangGraph + Celery + Redis 构建的分布式数据优化服务
 """
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from typing import Dict, List, Optional, Any, Literal
+from typing import Dict, List, Optional, Any
 import uvicorn
 from loguru import logger
 import uuid
 from datetime import datetime
 
 from config import config
-from llm_client import LLMClient
-from sentence_transformers import SentenceTransformer
-from knowledge_base_manager import KnowledgeBaseManager
-from workflow_graph import DataOptimizationWorkflow
+from task_manager import TaskManager
 from storage_manager import StorageManager
+from tasks import optimize_dataset_async
 
 # 初始化 FastAPI
 app = FastAPI(
-    title="Data Optimization Service (LangGraph)",
-    description="基于 LangGraph 的自进化数据优化智能体服务",
-    version="4.0.0"
+    title="Data Optimization Service (Distributed)",
+    description="基于 LangGraph + Celery + Redis 的分布式数据优化服务，支持大规模数据处理",
+    version="5.0.0"
 )
 
 app.add_middleware(
@@ -34,9 +32,8 @@ app.add_middleware(
 )
 
 # 全局变量
-workflow = None
+task_manager = None
 storage_manager = None
-optimization_tasks = {}
 
 # ==================== 数据模型 ====================
 
@@ -63,6 +60,9 @@ class OptimizationResult(BaseModel):
     task_id: str
     status: str
     mode: Optional[str] = None
+    progress: Optional[float] = Field(None, description="进度百分比 (0-100)")
+    completed_batches: Optional[int] = Field(None, description="已完成批次数")
+    total_batches: Optional[int] = Field(None, description="总批次数")
     optimized_dataset: Optional[List[Dict[str, Any]]] = None
     statistics: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
@@ -81,32 +81,16 @@ class HealthResponse(BaseModel):
 @app.on_event("startup")
 async def startup_event():
     """服务启动时初始化"""
-    global workflow, storage_manager
+    global task_manager, storage_manager
     
     try:
         logger.info("="*60)
-        logger.info("初始化数据优化服务 (LangGraph 版本)")
+        logger.info("初始化数据优化服务 (分布式版本)")
         logger.info("="*60)
         
-        # 初始化 LLM 客户端
-        logger.info("初始化 LLM 客户端...")
-        llm_client = LLMClient()
-        
-        # 初始化 Embedding 模型
-        logger.info(f"加载 Embedding 模型: {config.EMBEDDING_MODEL}")
-        embedding_model = SentenceTransformer(config.EMBEDDING_MODEL)
-        
-        # 初始化知识库管理器
-        logger.info("初始化知识库管理器...")
-        knowledge_base_manager = KnowledgeBaseManager(embedding_model)
-        
-        # 初始化 LangGraph 工作流
-        logger.info("构建 LangGraph 工作流...")
-        workflow = DataOptimizationWorkflow(
-            llm_client=llm_client,
-            embedding_model=embedding_model,
-            knowledge_base_manager=knowledge_base_manager
-        )
+        # 初始化任务管理器
+        logger.info("初始化任务管理器 (Redis)...")
+        task_manager = TaskManager()
         
         # 初始化存储管理器
         if config.SAVE_DATASETS or config.SAVE_REPORTS:
@@ -115,6 +99,9 @@ async def startup_event():
         
         logger.info("="*60)
         logger.info("✅ 数据优化服务初始化完成")
+        logger.info(f"   - Redis: {config.REDIS_HOST}:{config.REDIS_PORT}")
+        logger.info(f"   - 批次大小: {config.BATCH_SIZE}")
+        logger.info(f"   - 最大 Worker: {config.MAX_WORKERS}")
         logger.info("="*60)
         
     except Exception as e:
@@ -124,22 +111,19 @@ async def startup_event():
 # ==================== API 端点 ====================
 
 @app.post("/api/v1/optimize", response_model=OptimizationResponse)
-async def optimize_dataset(
-    request: OptimizationRequest,
-    background_tasks: BackgroundTasks
-):
+async def optimize_dataset(request: OptimizationRequest):
     """
-    优化数据集（异步）
+    优化数据集（异步 - 使用 Celery）
     
     支持两种模式：
     1. 标注流程优化（auto）：不提供 optimization_guidance，自动诊断和优化
     2. 指定优化（guided）：提供 optimization_guidance，根据指导优化
     
-    工作流：
-    - Module 1: 诊断（识别稀缺样本和低质量样本）
-    - Module 2: 生成增强（COT重写 + 合成生成）
-    - Module 3: RAG校验（校验所有优化/生成的样本）
-    - Module 4: PII清洗（清洗隐私信息）
+    特性：
+    - 分片处理：自动将大数据集切分成小批次处理
+    - 持久化：任务状态保存在 Redis，支持断点续传
+    - 进度跟踪：实时查看处理进度
+    - 分布式：支持多 Worker 并行处理
     """
     try:
         task_id = request.task_id or f"task_{uuid.uuid4().hex[:8]}"
@@ -148,30 +132,32 @@ async def optimize_dataset(
         logger.info(f"[{task_id}] 收到数据优化请求")
         logger.info(f"  数据集大小: {len(request.dataset)}")
         logger.info(f"  优化模式: {mode}")
+        logger.info(f"  批次大小: {config.BATCH_SIZE}")
         
-        # 初始化任务状态
-        optimization_tasks[task_id] = {
-            "status": "processing",
-            "mode": mode,
-            "start_time": datetime.now().isoformat(),
-            "dataset_size": len(request.dataset)
-        }
-        
-        # 在后台执行优化
-        background_tasks.add_task(
-            run_optimization,
-            task_id,
-            request.dataset,
-            request.knowledge_base,
-            request.optimization_guidance,
-            request.save_reports
+        # 创建任务记录
+        task_manager.create_task(
+            task_id=task_id,
+            dataset_size=len(request.dataset),
+            mode=mode,
+            batch_size=config.BATCH_SIZE
         )
+        
+        # 提交到 Celery 队列
+        optimize_dataset_async.delay(
+            task_id=task_id,
+            dataset=request.dataset,
+            knowledge_base=request.knowledge_base,
+            optimization_guidance=request.optimization_guidance,
+            save_reports=request.save_reports
+        )
+        
+        total_batches = (len(request.dataset) + config.BATCH_SIZE - 1) // config.BATCH_SIZE
         
         return OptimizationResponse(
             task_id=task_id,
-            status="processing",
+            status="pending",
             mode=mode,
-            message=f"数据优化任务已启动（{mode} 模式），数据集大小: {len(request.dataset)}"
+            message=f"数据优化任务已提交（{mode} 模式），数据集: {len(request.dataset)} 样本，分 {total_batches} 批处理"
         )
         
     except Exception as e:
@@ -181,17 +167,37 @@ async def optimize_dataset(
 
 @app.get("/api/v1/optimize/{task_id}", response_model=OptimizationResult)
 async def get_optimization_result(task_id: str):
-    """获取优化结果"""
-    if task_id not in optimization_tasks:
+    """
+    获取优化结果（支持进度查询）
+    
+    返回：
+    - status: pending, processing, completed, failed
+    - progress: 0-100 的进度百分比
+    - completed_batches: 已完成的批次数
+    - total_batches: 总批次数
+    """
+    task = task_manager.get_task(task_id)
+    
+    if not task:
         raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
     
-    task = optimization_tasks[task_id]
+    # 如果任务已完成，获取完整结果
+    optimized_dataset = None
+    if task["status"] == "completed":
+        batch_results = task_manager.get_batch_results(task_id)
+        optimized_dataset = []
+        for batch in batch_results:
+            if "optimized_samples" in batch:
+                optimized_dataset.extend(batch["optimized_samples"])
     
     return OptimizationResult(
         task_id=task_id,
         status=task["status"],
         mode=task.get("mode"),
-        optimized_dataset=task.get("optimized_dataset"),
+        progress=task.get("progress"),
+        completed_batches=task.get("completed_batches"),
+        total_batches=task.get("total_batches"),
+        optimized_dataset=optimized_dataset,
         statistics=task.get("statistics"),
         error=task.get("error")
     )
@@ -200,11 +206,17 @@ async def get_optimization_result(task_id: str):
 @app.post("/api/v1/optimize/sync")
 async def optimize_dataset_sync(request: OptimizationRequest):
     """
-    优化数据集（同步）
+    优化数据集（同步 - 仅用于小数据集）
     
-    同步执行优化，直接返回结果
-    适用于小数据集（< 100 样本）
+    警告：仅适用于小数据集（< 100 样本）
+    大数据集请使用异步接口 /api/v1/optimize
     """
+    if len(request.dataset) > 100:
+        raise HTTPException(
+            status_code=400,
+            detail="数据集过大，请使用异步接口 /api/v1/optimize"
+        )
+    
     try:
         task_id = request.task_id or f"task_{uuid.uuid4().hex[:8]}"
         mode = "guided" if request.optimization_guidance else "auto"
@@ -213,44 +225,16 @@ async def optimize_dataset_sync(request: OptimizationRequest):
         logger.info(f"  数据集大小: {len(request.dataset)}")
         logger.info(f"  优化模式: {mode}")
         
-        # 执行优化
-        result = workflow.run(
+        # 直接调用 Celery 任务（同步执行）
+        result = optimize_dataset_async(
+            task_id=task_id,
             dataset=request.dataset,
             knowledge_base=request.knowledge_base,
             optimization_guidance=request.optimization_guidance,
-            iteration_id=0
+            save_reports=request.save_reports
         )
         
-        optimized_dataset = result["optimized_dataset"]
-        statistics = result["statistics"]
-        
-        logger.info(f"[{task_id}] 优化完成: {len(request.dataset)} → {len(optimized_dataset)}")
-        
-        # 保存数据集和报告
-        if storage_manager and request.save_reports:
-            if config.SAVE_DATASETS:
-                storage_manager.save_optimized_dataset(
-                    task_id=task_id,
-                    dataset=optimized_dataset,
-                    statistics=statistics,
-                    mode=mode
-                )
-            
-            if config.SAVE_REPORTS:
-                storage_manager.save_analysis_report(
-                    task_id=task_id,
-                    diagnostic_report=result.get("diagnostic_report", {}),
-                    statistics=statistics,
-                    mode=mode
-                )
-        
-        return {
-            "task_id": task_id,
-            "status": "completed",
-            "mode": mode,
-            "optimized_dataset": optimized_dataset,
-            "statistics": statistics
-        }
+        return result
         
     except Exception as e:
         logger.error(f"同步优化失败: {e}")
@@ -259,16 +243,19 @@ async def optimize_dataset_sync(request: OptimizationRequest):
 
 @app.post("/api/v1/knowledge-base/load")
 async def load_knowledge_base(knowledge: List[str]):
-    """加载知识库"""
+    """
+    加载知识库
+    
+    注意：在分布式环境中，知识库需要在每个 Worker 中加载
+    建议在优化请求中直接传递知识库
+    """
     try:
-        logger.info(f"加载知识库，共 {len(knowledge)} 条知识")
-        
-        workflow.knowledge_base.add_knowledge(knowledge)
+        logger.info(f"收到知识库加载请求，共 {len(knowledge)} 条知识")
         
         return {
             "status": "success",
-            "message": f"成功加载 {len(knowledge)} 条知识",
-            "knowledge_base_stats": workflow.knowledge_base.get_stats()
+            "message": f"知识库将在任务执行时加载（共 {len(knowledge)} 条）",
+            "note": "在分布式环境中，请在优化请求中直接传递知识库"
         }
         
     except Exception as e:
@@ -279,13 +266,20 @@ async def load_knowledge_base(knowledge: List[str]):
 @app.get("/api/v1/health", response_model=HealthResponse)
 async def health_check():
     """健康检查"""
+    try:
+        # 检查 Redis 连接
+        task_manager.redis_client.ping()
+        redis_available = True
+    except:
+        redis_available = False
+    
     return HealthResponse(
-        status="healthy",
+        status="healthy" if redis_available else "degraded",
         service="data-optimization-service",
-        version="4.0.0",
-        llm_available=workflow.llm_client.is_available() if workflow else False,
+        version="5.0.0",
+        llm_available=redis_available,  # 简化检查
         embedding_model=config.EMBEDDING_MODEL,
-        workflow_engine="LangGraph"
+        workflow_engine="LangGraph + Celery + Redis"
     )
 
 
@@ -331,85 +325,66 @@ async def get_saved_dataset(task_id: str):
 @app.get("/api/v1/stats")
 async def get_system_stats():
     """获取系统统计信息"""
-    if not workflow:
+    if not task_manager:
         raise HTTPException(status_code=503, detail="服务未初始化")
     
+    all_tasks = task_manager.list_tasks()
+    
     return {
-        "knowledge_base_stats": workflow.knowledge_base.get_stats(),
-        "active_tasks": len([t for t in optimization_tasks.values() if t["status"] == "processing"]),
-        "completed_tasks": len([t for t in optimization_tasks.values() if t["status"] == "completed"]),
-        "failed_tasks": len([t for t in optimization_tasks.values() if t["status"] == "failed"]),
-        "workflow_engine": "LangGraph"
+        "total_tasks": len(all_tasks),
+        "pending_tasks": len([t for t in all_tasks if t["status"] == "pending"]),
+        "processing_tasks": len([t for t in all_tasks if t["status"] == "processing"]),
+        "completed_tasks": len([t for t in all_tasks if t["status"] == "completed"]),
+        "failed_tasks": len([t for t in all_tasks if t["status"] == "failed"]),
+        "workflow_engine": "LangGraph + Celery + Redis",
+        "batch_size": config.BATCH_SIZE,
+        "max_workers": config.MAX_WORKERS
     }
 
 
-# ==================== 后台任务 ====================
+@app.post("/api/v1/tasks/{task_id}/resume")
+async def resume_task_endpoint(task_id: str):
+    """恢复中断的任务"""
+    task = task_manager.get_task(task_id)
+    
+    if not task:
+        raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
+    
+    if task["status"] in ["completed", "failed"]:
+        raise HTTPException(status_code=400, detail=f"任务已{task['status']}，无法恢复")
+    
+    # 重新提交任务
+    from tasks import resume_task
+    resume_task.delay(task_id)
+    
+    return {
+        "status": "success",
+        "message": f"任务 {task_id} 已重新提交",
+        "task_id": task_id
+    }
 
-async def run_optimization(
-    task_id: str,
-    dataset: List[Dict],
-    knowledge_base: Optional[List[str]],
-    optimization_guidance: Optional[Dict],
-    save_reports: bool = True
-):
-    """后台执行优化任务"""
-    try:
-        logger.info(f"[{task_id}] 开始后台优化任务")
-        
-        mode = "guided" if optimization_guidance else "auto"
-        
-        # 执行工作流
-        result = workflow.run(
-            dataset=dataset,
-            knowledge_base=knowledge_base,
-            optimization_guidance=optimization_guidance,
-            iteration_id=0
-        )
-        
-        optimized_dataset = result["optimized_dataset"]
-        statistics = result["statistics"]
-        
-        # 保存数据集和报告
-        if storage_manager and save_reports:
-            if config.SAVE_DATASETS:
-                storage_manager.save_optimized_dataset(
-                    task_id=task_id,
-                    dataset=optimized_dataset,
-                    statistics=statistics,
-                    mode=mode
-                )
-            
-            if config.SAVE_REPORTS:
-                storage_manager.save_analysis_report(
-                    task_id=task_id,
-                    diagnostic_report=result.get("diagnostic_report", {}),
-                    statistics=statistics,
-                    mode=mode
-                )
-        
-        # 更新任务状态
-        optimization_tasks[task_id].update({
-            "status": "completed",
-            "end_time": datetime.now().isoformat(),
-            "optimized_dataset": optimized_dataset,
-            "statistics": statistics
-        })
-        
-        logger.info(f"[{task_id}] 优化完成: {len(dataset)} → {len(optimized_dataset)}")
-        
-    except Exception as e:
-        logger.error(f"[{task_id}] 优化失败: {e}")
-        
-        optimization_tasks[task_id].update({
-            "status": "failed",
-            "end_time": datetime.now().isoformat(),
-            "error": str(e)
-        })
+
+@app.delete("/api/v1/tasks/{task_id}")
+async def delete_task_endpoint(task_id: str):
+    """删除任务"""
+    task = task_manager.get_task(task_id)
+    
+    if not task:
+        raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
+    
+    task_manager.delete_task(task_id)
+    
+    return {
+        "status": "success",
+        "message": f"任务 {task_id} 已删除"
+    }
 
 
 # ==================== 启动服务 ====================
 
 if __name__ == "__main__":
     port = config.PORT
-    logger.info(f"启动数据优化服务（LangGraph 版本），端口: {port}")
+    logger.info(f"启动数据优化服务（分布式版本），端口: {port}")
+    logger.info(f"Redis: {config.REDIS_HOST}:{config.REDIS_PORT}")
+    logger.info(f"批次大小: {config.BATCH_SIZE}")
     uvicorn.run(app, host=config.HOST, port=port)

@@ -88,7 +88,8 @@ class OptimizationAgent:
         self,
         sparse_clusters: List[Dict],
         mode: Literal["auto", "guided"],
-        guidance: Dict = None
+        guidance: Dict = None,
+        max_samples: int = None
     ) -> Dict[str, Any]:
         """
         生成稀缺样本
@@ -97,14 +98,27 @@ class OptimizationAgent:
             sparse_clusters: 稀缺聚类列表
             mode: 生成模式
             guidance: 生成指导（guided 模式使用）
+            max_samples: 最大生成数量（用于分批生成）
         """
         logger.info(f"  为 {len(sparse_clusters)} 个稀缺聚类生成样本...")
         
         generated_samples = []
         
         for cluster in sparse_clusters:
+            # 如果已达到最大数量，停止生成
+            if max_samples and len(generated_samples) >= max_samples:
+                break
+            
             # 计算需要生成的数量
             target_count = max(5, 50 - cluster["size"])
+            
+            # 如果设置了最大数量，调整目标数量
+            if max_samples:
+                remaining = max_samples - len(generated_samples)
+                target_count = min(target_count, remaining)
+            
+            if target_count <= 0:
+                continue
             
             try:
                 if mode == "auto":
@@ -124,6 +138,7 @@ class OptimizationAgent:
                 # 标记为生成样本
                 for sample in new_samples:
                     sample["_generated"] = True
+                    sample["_cluster_id"] = cluster.get("cluster_id", -1)
                 
                 generated_samples.extend(new_samples)
                 

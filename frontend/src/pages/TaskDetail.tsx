@@ -10,6 +10,8 @@ import {
   message,
   Spin,
   Empty,
+  Progress,
+  Alert,
 } from 'antd'
 import { 
   ArrowLeftOutlined, 
@@ -20,6 +22,7 @@ import {
   ClockCircleOutlined,
   SyncOutlined,
   CloseCircleOutlined,
+  ReloadOutlined,
 } from '@ant-design/icons'
 import { taskApi } from '@/services/api'
 import { getStatusColor, getStatusText, getPhaseText, formatDuration } from '@/utils/helpers'
@@ -32,6 +35,9 @@ const TaskDetail = () => {
   const [task, setTask] = useState<MLTask | null>(null)
   const [executions, setExecutions] = useState<TaskExecution[]>([])
   const [loading, setLoading] = useState(true)
+  const [progress, setProgress] = useState<number>(0)
+  const [completedBatches, setCompletedBatches] = useState<number>(0)
+  const [totalBatches, setTotalBatches] = useState<number>(0)
 
   useEffect(() => {
     if (taskId) {
@@ -51,6 +57,18 @@ const TaskDetail = () => {
       ])
       setTask(taskRes.data)
       setExecutions(executionsRes.data)
+      
+      // 更新进度信息（如果任务返回了进度数据）
+      const taskData = taskRes.data as MLTask
+      if (taskData.progress !== undefined) {
+        setProgress(taskData.progress)
+      }
+      if (taskData.completedBatches !== undefined) {
+        setCompletedBatches(taskData.completedBatches)
+      }
+      if (taskData.totalBatches !== undefined) {
+        setTotalBatches(taskData.totalBatches)
+      }
     } catch (error) {
       message.error('加载任务详情失败')
     } finally {
@@ -126,16 +144,54 @@ const TaskDetail = () => {
         </Button>
       </div>
 
+      {/* 进度条 - 仅在处理中显示 */}
+      {['OPTIMIZING', 'TRAINING', 'EVALUATING', 'LOOPING', 'processing'].includes(task.status) && totalBatches > 0 && (
+        <Card style={{ marginBottom: 24 }}>
+          <Alert
+            message="任务处理中"
+            description={
+              <div>
+                <div style={{ marginBottom: 16 }}>
+                  正在处理数据集，请稍候...
+                </div>
+                <Progress 
+                  percent={Math.round(progress)} 
+                  status="active"
+                  strokeColor={{
+                    '0%': '#108ee9',
+                    '100%': '#87d068',
+                  }}
+                />
+                <div style={{ marginTop: 8, color: '#666' }}>
+                  已完成批次: {completedBatches} / {totalBatches}
+                  {completedBatches > 0 && totalBatches > 0 && (
+                    <span style={{ marginLeft: 16 }}>
+                      预计剩余: {Math.ceil((totalBatches - completedBatches) * 2)} 分钟
+                    </span>
+                  )}
+                </div>
+              </div>
+            }
+            type="info"
+            showIcon
+            icon={<SyncOutlined spin />}
+          />
+        </Card>
+      )}
+
       <Card 
         title={task.taskName}
         extra={
           <Space>
+            <Button icon={<ReloadOutlined />} onClick={loadTaskDetail}>
+              刷新
+            </Button>
             {task.status === 'PENDING' && (
               <Button type="primary" icon={<PlayCircleOutlined />} onClick={handleStart}>
                 启动
               </Button>
             )}
-            {['OPTIMIZING', 'TRAINING', 'EVALUATING', 'LOOPING'].includes(task.status) && (
+            {['OPTIMIZING', 'TRAINING', 'EVALUATING', 'LOOPING', 'processing'].includes(task.status) && (
               <>
                 <Button icon={<PauseCircleOutlined />} onClick={handleSuspend}>
                   暂停
